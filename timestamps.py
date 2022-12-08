@@ -3,7 +3,6 @@ import argparse
 import mmap
 import os
 import re
-import sys
 
 from collections import OrderedDict
 from enum import Enum, auto
@@ -19,7 +18,7 @@ class Column(Enum):
     LAST = auto()
 
 
-def main(args):
+def main():
     parser = argparse.ArgumentParser(description='Print first and last timestamp from log files. Default: YYYY-MM-DD '
                                                  'HH:mm:ss,sss') 
     parser.add_argument('-v', '--verbose', action="store_true", help="Verbose output")
@@ -190,4 +189,4 @@ def longest(results, field) -> int:
 
 
 if __name__ == '__main__':
-    main(sys.argv)
+    main()
