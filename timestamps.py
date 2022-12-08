@@ -10,6 +10,7 @@ from enum import Enum, auto
 from pathlib import Path
 
 verbose = False
+no_match = "No Regex Match"
 
 
 class Column(Enum):
@@ -19,19 +20,22 @@ class Column(Enum):
 
 
 def main(args):
-    parser = argparse.ArgumentParser(description='Print first and last timestamp from log files')
+    parser = argparse.ArgumentParser(description='Print first and last timestamp from log files. Default: YYYY-MM-DD '
+                                                 'HH:mm:ss,sss') 
     parser.add_argument('-v', '--verbose', action="store_true", help="Verbose output")
-    parser.add_argument('-f', '--format', required=False, help='Timestamp format regex')
+    parser.add_argument('-r', '--regex', required=False, help='Timestamp regex')
     parser.add_argument('-s', '--sort', required=False, help='Sort order: FILENAME (default), FIRST, or LAST')
     parser.add_argument('file', nargs='+', help='log file')
     args = parser.parse_args()
 
     sort_order = Column.FILENAME
-    timestamp_format = re.compile(rb"([\d-]{10})\s([\d:,]{12})")  # YYYY-MM-DD HH:mm:ss,sss
+    regex = r"([\d-]{10})\s([\d:,]{12})"
 
     if args.verbose:
         global verbose
         verbose = True
+    if args.regex:
+        regex = r"{}".format(args.regex)
     if args.sort:
         if args.sort in Column.__members__:
             if args.sort == Column.FILENAME.name:
@@ -42,16 +46,16 @@ def main(args):
                 sort_order = Column.LAST
         else:
             raise Exception('Invalid sort order. Use: FILENAME, FIRST, or LAST')
-    if args.format:
-        pass
-        # TODO - Allow the timestamp regex to be changed
-        # timestamp_format = args.format
+
+    timestamp_regex = r"{}".format(regex)
+    timestamp_regex_encode = timestamp_regex.encode()
+    timestamp_re = re.compile(timestamp_regex_encode)
 
     results = dict()
 
     for file in args.file:
         if os.path.isfile(file):
-            results.update(parse_file(file, timestamp_format))
+            results.update(parse_file(file, timestamp_re))
 
     print('Sorting....') if verbose else None
     final_results = sort_by(results, sort_order)
@@ -62,6 +66,7 @@ def main(args):
 
 def parse_file(file, timestamp_format) -> dict:
     if os.path.isfile(file):
+        print('Starting: {}'.format(file)) if verbose else None
         results = dict()
         file_path = Path(file)
         with open(file_path, "r") as file_open:
@@ -72,22 +77,35 @@ def parse_file(file, timestamp_format) -> dict:
 
 
 def get_timestamps(file, regex) -> list:
-    timestamps = [get_first_timestamp(file, regex), get_last_timestamp(file, regex)]
+    first_timestamp = get_first_timestamp(file, regex)
+    # Saving time if there was no match going through entire file first time, skip this.
+    if first_timestamp == no_match:
+        last_timestamp = no_match
+    else:
+        last_timestamp = get_last_timestamp(file, regex)
+    timestamps = [first_timestamp, last_timestamp]
+    print("Timestamps: {}".format(timestamps)) if verbose else None
     return timestamps
 
 
 def get_first_timestamp(file, regex) -> str:
-    first = ''
+    first = no_match
     for line in iter(file.readline, b""):
         match = regex.search(line)
         if match:
             first = match.group(0)
             break
-    return first.decode()
+
+    print("First timestamp: {}".format(first)) if verbose else None
+
+    if type(first) == bytes:
+        return first.decode()
+    else:
+        return first
 
 
 def get_last_timestamp(file, regex) -> str:
-    last = ''
+    last = no_match
     # Initialize starting position
     position = -2
     looking = True
@@ -99,7 +117,16 @@ def get_last_timestamp(file, regex) -> str:
             # We're reading 1 byte to check for newline. If False, we go back 2 bytes. Overall we're stepping pos
             # by -1
             position += -1
-            file.seek(-2, os.SEEK_CUR)
+            try:
+                file.seek(-2, os.SEEK_CUR)
+            except ValueError as err:
+                # When we've gone through the entire file with no match. This should not occur as we skip this function
+                # if the get_first_timestamp has no match.
+                print("While searching for the last timestamp, we reached top of file from the bottom with no match. "
+                      "This should not occur: {} ".format(err))
+                # Continue on with no match
+                looking = False
+                break
 
         # Increment position by 1 to move to the start of the next line.
         # We also need to seek relative to end of file as the while loop readline() advanced our position
@@ -111,7 +138,13 @@ def get_last_timestamp(file, regex) -> str:
         else:
             # Move the byte back one to avoid reading the same newline again, causing infinite loop
             position += -1
-    return last.decode()
+
+    print("Last timestamp: {}".format(last)) if verbose else None
+
+    if type(last) == bytes:
+        return last.decode()
+    else:
+        return last
 
 
 def sort_by(results, column):
